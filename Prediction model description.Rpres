@@ -1,0 +1,110 @@
+Next-Word Prediction Model
+========================================================
+author: Satindra Kathania
+date: 12 August, 2020
+autosize: true
+font-family: 'Helvetica'
+
+<br><br>
+
+<small><strong>Capstone project for Data Science Specialization offered by Johns Hopkins University</strong></small>
+
+
+Overview
+========================================================
+<small><small><small><strong>The goal for this Capstone Project are:</strong>- 
+Develop a text prediction algorithm that takes a strings or a phrase (multiple words) and predict the next possible word as output. **Deploy a Next word predictor**, Shiny App using this algorithm. Such as a swiftkey/smart keyboard on mobile devices.<br><br>
+<strong>The underlying theory of the predictive model is n-grams language model .</strong>
+An n-gram language model assigns a probability according to:-<br>
+  ![alt text](Markov.png)<br>
+where the approximation reflects the <strong>*Markov assumption*</strong>,i.e the most recent n-1 tokens are relevant while predicting the next word.<br><br>
+<strong>*The maximum-likelihood (ML)*</strong> probability estimates for the n-grams are given by their relative frequencies leading to sparse data problem and need further modification such as discounting/back-off weights or smoothing.<br>
+   ![alt text](MLE 1.png)<br>
+<strong> Data Source for this project:</strong> https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip
+<br>
+<strong> R packages used:</strong> The main R libraries used to accomplish this project are:'dplyr', 'tidytext','stringr','tokenizer','tm','ggplot' and 'wordcloud'</small>
+</small></small></small>
+
+
+
+
+Steps to build N-Grams Model
+====================================================
+
+<small><small><small><small> -Creating the large corpus with sampling (10%) and pooling the blogs, news, and twitter data with stop words.<br><br>
+                             -Cleaning the corpus and Building n-grams frequency tables, up to 5-grams. These frequency tables serve as frequency dictionaries for the predictive model to search for the match.<br><br>
+                             -Probability of a term is modeled based on the Markov chain assumption that the occurrence of a term is dependent on the preceding terms.<br><br>
+                             -Pruning:Removed low frequency < 2 n-grams.<br>
+                             -Use a 'backoff strategy' to predict, means if the probability of a penta-gram is very low, use quad-gram to predict, and so on.This is a very simple and intuitive method with no discount needed, just use fixed backoff factor (0.4) & relative frequencies to calculate the score. 
+![alt text](backoff alg.png)<br>
+The recursion ends at unigrams, with N being the size of the training corpus.
+
+***
+
+![J Dumbali& N Rao.2019](N-Gram models.png)
+<br>
+<strong><small><small><small><small>Fig:N-Grams linguistic models (J Dumbali, N Rao, 2019)</strong><br>
+</small></small></small></small>
+
+
+Stupid Backoff Algorithm
+================================================
+<small><small><small>This prediction model uses 1-5 ngrams as dictionary to search with a pre-calculated back-off score from highest to lowest frequency. The probability of next word is depends on the backoff score which is calculated by dividing the counts of matches found in ngram/n-1 gram multiplied by **backoff factor= 0.4** with each dropping n-grams.This is an inexpensive method with comparative good quality or accuracy<br>
+- First the search started with 5-grams model to match last 4 words of User Input and the most likely next word is predicted with highest score.<br>
+- If no suitable match is found in the 5-gram, the model search 'back's off' to a 4-gram, i.e. using the last three words, from the user provided phrase, to predict the next best match.**(score x 0.4 )**<br>
+- If no 4-gram match is found, the model 'back's off' to a 3-gram, i.e. using the last two words from the user provided phrase, to predict a suitable match.**(score x 0.4 x 0.4 )**<br>
+- If no bigram word is found, the model default 'back's off' to the highest frequency unigram word available. **(score x 0.4 x 0.4 x 0.4 )**<br>
+- At last Validating and Estimating the Accuracy of the model by using test strings.</small></small>
+
+<p style='color:brown'> Additional Information </p>
+<small><small><small><small>1. **Large Language Models in Machine Translation**,https://www.aclweb.org/anthology/D07-1090.pdf<br>
+2. **Real Time Word Prediction Using N-Grams Model**,Jaysidh Dumbali, Nagaraja Rao A.,IJITEE,ISSN: 2278-3075, Vol.8 Issue-5, 2019<br>
+3. **Tokenizer: Introduction to the tokenizers R Package** https://cran.r-project.org/web/packages/tokenizers/<br>
+4. **Smoothing and Backoff**, http://www.cs.cornell.edu/courses/cs4740/2014sp/lectures/
+smoothing+backoff.pdf.<br>
+5. **N-gram Language Models**, https://web.stanford.edu/~jurafsky/slp3/ed3book.pdf<br>
+6. **Speech and Language Processing** https://web.stanford.edu/class/cs124/lec/languagemodeling.pdf<br>
+7. **NLP: Language Models,** https://www.csd.uwo.ca/courses/CS4442b/L9-NLP-
+LangModels.pdf
+</small></small></small></small>
+
+
+
+
+
+Shiny Web Application
+============================================================
+<small><small><small><small>
+![Shiny app](ShinyCapstone.png)
+<small><strong>The web application is hosted at:</strong>
+https://satindrakathania-2020.shinyapps.io/ShinyCapstone/
+<br><br>
+<strong>Capstone Data Science GitHub Repository link:</strong>
+https://github.com/SatK-ds2020/DS-capstone-project-2020
+<br><br>
+***
+
+
+<strong>To initialize the app: Wait 5-10 seconds and follow the instruction:</strong><br>
+-There is a text input box, where you can enter your text.<br>
+-The bar-plot of top 10 predictions and wordcloud for the most probable words will be displayed once clicking submit button.<br>
+-There is a Summary and References tab for more information about the app.
+<p style='color:brown'> Conclusions and feedback </p>
+<small> 
+<small> - Learned R based data analytics,Natural language processing & text mining techniques from this DS specialization. <br>
+       - Explored different tools and package and their uses to manipulate, clean, analyze and                visualize the data.<br>
+       - Uses GitHub to manage different data science projects for this specialization.<br>
+       - Learned whole sequence from data acquisition to publication and presentation along with              skills to build the  web based application<br>
+       - Learned to perform the regression analysis and statistical inferences by using Machine               Learning techniques for big data process and predictions.<br>
+       - Looking forward to demonstrate my skills and learning to solve real-world big data                   problems.</small>
+
+
+</small></small></small></small>
+
+
+
+
+
+
+
+

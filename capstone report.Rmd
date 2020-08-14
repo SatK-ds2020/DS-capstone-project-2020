@@ -1,0 +1,764 @@
+---
+title: "Data Science Capstone Project Report"
+author: "Satindra Kathania"
+date: "13/8/2020"
+output: html_document
+---
+
+# Executive Summary
+This is a Data Science Capstone Project of Coursera offered by JHU. The project involve various Natural Language Processing and techniques to build a next word predictor web application from scratch.This app applies the basic functionality similar of SwiftKey smart keyboard on mobile devices. Precisely, The goal of this exercise is to build a the text predictive model and evaluate the model for efficiency and accuracy.Deploy a web app by using this text algorithm, which takes up a string or phrases of words as input and predict the next possible word as output, based on the probability or score from n-gram models.
+
+1.Load packages
+```{r load-packages, message=FALSE, warning=FALSE}
+# https://rpubs.com/SatKat_2020/648814
+# https://satindrakathania-2020.shinyapps.io/ShinyCapstone/
+library(tm); library(dplyr); library(stringr); library(data.table); library(tokenizers); library(tidyr)
+```
+2.Data Acquisition
+The data was downloaded from coursera provided site:
+Link: https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip
+The dataset is from a corpus called HC Corpora and available in English, Finnish, German, and Russian. For this exercise we are using English dataset.
+```{r,echo=TRUE,results='hide',eval=FALSE}
+#create paths for each file and then read the lines
+pathT<-"~/Desktop/DS notes/NLP capstone/DS capstone/final/en_US/en_US.twitter.txt"
+pathB<-"~/Desktop/DS notes/NLP capstone/DS capstone/final/en_US/en_US.blogs.txt"
+pathN<-"~/Desktop/DS notes/NLP capstone/DS capstone/final/en_US/en_US.news.txt"
+twitter<-readLines(pathT,encoding = "UTF-8", skipNul = TRUE) # 2.2 sec/319 Mb
+blogs<-readLines(pathB,encoding = "UTF-8", skipNul = TRUE) # 2.3 sec/255.4 Mb
+news<-readLines(pathN,encoding = "UTF-8", skipNul = TRUE) # 2.3 sec/257.3 Mb
+```
+# Sampling the data
+To reiterate, to build models I don’t need to use all of the data. Oftenly, few randomly selected rows or chunks need to be included to get an accurate approximation to results that would be obtained using all the data. 
+
+```{r,echo=TRUE,results='hide',eval=FALSE}
+set.seed(7280)
+# sampling 10% of data
+ST <- sample(twitter, length(twitter)*0.1, replace = FALSE) # twitter sample
+SB <- sample(blogs, length(blogs)* 0.1, replace = FALSE) # blogs sample
+SN <- sample(news, length(news)*0.1, replace = FALSE) # news sample 
+rm("twitter","blogs","news")
+# Combining the three docs
+Scomb<-c(ST,SB,SN)# 87.5 Mb
+rm("ST","SB","SN")
+```
+
+# Making and Cleaning the corpus 
+Removing numbers digits,punctuations,extra strings,space and any profanity or words that are not required for prediction modelling. For this, the text file of defined profanity words is downloaded from: https://www.cs.cmu.edu/~biglou/resources/bad-words.txt and stored in working directory.
+```{r,echo=TRUE,results='hide',eval=FALSE}
+# Stopword or profanity removal
+Path.P<- "~/Desktop/DS notes/NLP capstone/DS capstone/DS capstone/bad-words.txt"
+profanity <- as.vector(readLines(Path.P))
+
+# some extra unwanted words
+extra <- c( "rt","re","aa","aaa","aaaa","ab","aabb","zz","zzz","ve","lol","em","im","gr","en","el", "st","a m","p m", "u.s","d","nt","ld", "p.m","yr","ah","aahh", "a.m","ol","mr", "dr", "ll", "ur", "omg", "co", "oh", "ha", "haha", "na", "la","se","coz","aahahaha","a","b","c","d","e","f","g","h","j","k","l","m","n","o","p","q","r","s","t","u","v","w","x","y","z")
+
+# removing non-ASCII and latin characters
+Scomb<- sapply(Scomb, function(x) iconv(x, "latin1", "ASCII", sub=""))
+
+# making a sample corpus
+corpus <- VCorpus(VectorSource(Scomb),readerControl = list(readPlain,language = "english",load=TRUE))# 1.9Gb
+rm("Scomb")
+```
+
+Details of the cleaning functions can be found in **cleanfunction.R** file on Github repository.Some common steps towards corpus cleaning are included in tm package, however, the text needed some specific cleanup.  
+
+```{r,echo=TRUE, results= 'hide',eval=FALSE}
+# convert letter to lower case
+corpus<- tm_map(corpus, content_transformer(tolower))
+# remove numbers
+corpus <- tm_map(corpus, content_transformer(removeNumbers))
+# remove punctuation markds
+corpus<- tm_map(corpus, content_transformer(removePunctuation))
+# remove commonly occurring words not useful for prediction
+#Scorpus <- tm_map(Scorpus, removeWords, stopwords("english"))
+# remove potentially offensive words
+corpus <- tm_map(corpus, removeWords, profanity)
+corpus <- tm_map(corpus, removeWords, extra)
+# Scorpus <- tm_map(Scorpus, stemDocument)#not required
+# remove extra white space between words, leaving only one space
+corpus <- tm_map(corpus, stripWhitespace)
+rm("profanity","extra")
+saveRDS(corpus,file="clean_corpus.rds") # saving the corpus
+corpus<-readRDS("clean_corpus.rds")# in case we want it again
+# see cleanfunction.R
+```
+# Sampling of clean corpus to training and test sets
+```{r,echo=TRUE,results='hide',eval=FALSE}
+set.seed(7280)
+sample <- sample.int(length(corpus),size=length(corpus)*0.01, replace=FALSE) 
+testing  <- corpus[sample]
+training <- corpus[-sample]
+saveRDS(testing,file ="testing.rds")
+saveRDS(training, file = "training.rds")
+rm("corpus","testing")
+```
+ 
+ **Tokenization of clean corpus to build n-grams from 1-5 grams**
+```{r,echo=TRUE,results='hide',eval=FALSE}
+#Creating data frame with a line in each row. This is done to supply the data frame to the tockenizing functions
+cleanData <- data.frame(cleantext = sapply(training, as.character), stringsAsFactors=FALSE)
+cleanData <- cleanData[!is.na(cleanData$cleantext),]
+rm("training")
+
+# NGram 1
+tokens <- tokenize_ngrams(cleanData,n=1,n_min = 1)
+tokenTable <- table(unlist(tokens))
+Onegram <- data.frame(tokenTable)
+Onegram <- Onegram[order(Onegram$Freq,decreasing = TRUE),]
+rm("tokens","tokenTable")
+head(Onegram)
+Onegram<-Onegram[Onegram$Freq >1,]# pruning the freq below 2
+saveRDS(Onegram,"./Grams/Onegram.rds")
+
+#NGram 2
+tokens <- tokenize_ngrams(cleanData,n=2,n_min = 2)
+tokenTable <- table(unlist(tokens))
+Twogram <- data.frame(tokenTable)
+Twogram <- Twogram[order(Twogram$Freq,decreasing = TRUE),]
+rm("tokens","tokenTable")
+head(Twogram)
+Twogram<-Twogram[Twogram$Freq > 1,]
+saveRDS(Twogram,"./Grams/Twogram.rds")
+
+#NGram 3
+tokens <- tokenize_ngrams(cleanData,n=3,n_min = 3)
+tokenTable <- table(unlist(tokens))
+Threegram <- data.frame(tokenTable)
+Threegram <- Threegram[order(Threegram$Freq,decreasing = TRUE),]
+rm("tokens","tokenTable")
+head(Threegram)
+Threegram<-Threegram[Threegram$Freq > 1,]
+saveRDS(Threegram,"./Grams/Threegram.rds")
+
+
+#NGram 4
+tokens <- tokenize_ngrams(cleanData,n=4,n_min = 4)
+tokenTable <- table(unlist(tokens))
+Fourgram <- data.frame(tokenTable)
+Fourgram <- Fourgram[order(Fourgram$Freq,decreasing = TRUE),]
+rm("tokens","tokenTable")
+head(Fourgram)
+Fourgram<- Fourgram[Fourgram$Freq > 1,]
+saveRDS(Fourgram,"./Grams/Fourgram.rds")
+
+# NGram 5
+tokens <- tokenize_ngrams(cleanData,n=5,n_min = 5)
+tokenTable <- table(unlist(tokens))
+Fivegram <- data.frame(tokenTable)
+Fivegram <- Fivegram[order(Fivegram$Freq,decreasing = TRUE),]
+rm("tokens","tokenTable")
+head(Fivegram)
+Fivegram<- Fivegram[Fivegram$Freq > 1,]
+saveRDS(Fivegram,"./Grams/Fivegram.rds")
+
+rm("Onegram","Twogram","Threegram","Fourgram","Fivegram")
+rm("cleanData")
+
+```
+
+# N-gram language model
+A statistical language model is a probability distribution over sequences of words. Given such a sequence, say of length m, it assigns a probability *P(w~1~,.....,w~m~)* to the whole sequence.However,data sparsity is a major problem in building language models. Most possible word sequences are not observed in training corpus.Therefore, as a solution to that, an n-gram language model are designed to assign probabilities to strings of words according to *Markov Chain Rule*.
+![](ngrampng.png)
+
+where, it is assumed that the probability of observing the *i^th* word *w~i~* in the context history of the preceding i−1 words can be approximated by the probability of observing it in the shortened context history of the preceding n−1 words,i.e only the most recent n-1 tokens are relevant when predicting the next word **[11]**. 
+
+The maximum-likelihood (ML) probability estimates for the n-grams are given by their relative frequencies.**[1]**
+![](ngram2png.png)
+
+The conditional probability can be calculated from n-gram model frequency counts:
+![](ngram2.png)
+
+The terms bigram and trigram language models denote n-gram models with n = 2 and n = 3, respectively.**[11]**
+
+Typically, the n-gram model probabilities are not derived directly from frequency counts, because models derived this way have severe sparse data problems when confronted with any n-grams that have not been explicitly seen before. That is, MLE or relative frequency can turns out be zero and leading to inaccurate or undefined probability estimates. Instead, some form of smoothing is necessary, assigning some of the total probability mass to unseen words or n-grams. Various methods are used, from simple "add-one" smoothing (assign a count of 1 to unseen n-grams, as an uninformative prior) to more sophisticated models, such as Good-Turing discounting or back-off models.For more details over smoothing see Bill MacCartney tutorial.**[3]**
+
+The Non-linear methods or back-off models, allowed the use of  most detailed model (n-gram)  that can provide sufficiently reliable information about the current context  by backing off through progressively shorter histories.
+State-of-the-art smoothing uses variations of context-dependent backoff with the following scheme: 
+![](ngram3png.png)
+
+where *p(.) are pre-computed and stored probabilities, and lambda are back-off weights.The recursion ends at either unigrams or at the uniform distribution for zero-grams.Problem with backoff is that the probability estimates can change suddenly on adding more data when the back-off algorithm selects a different order of n-gram model on which to base the estimate. But it works well in practice in combination with smoothing. Therefore, a good option is to use simple linear interpolation with MLE n-gram estimates plus some allowance for unseen words (e.g. Good-Turing discounting [9]). As examples, Kneser-Ney Smoothing (Kneser and Ney, 1995), Katz Backoff (Katz, 1987) and linear interpolation (Jelinek and Mercer, 1980) can be expressed in this scheme (Chen and Goodman, 1998).
+**Example**
+In a bigram (n = 2) language model, the probability of the sentence I saw the red house is approximated as
+Bidirectional representations condition on both pre- and post- context (e.g., words) in all layers.
+![](ex1.png)
+
+whereas in a trigram (n = 3) language model, the approximation is
+![](ex2.png)
+
+Note that the context of the first n–1 n-grams is filled with start-of-sentence markers, typically denoted (s).
+Additionally, without an end-of-sentence marker, the probability of an ungrammatical sequence "I saw the" would always be higher than that of the longer sentence "I saw the red house".
+
+# Katz's back-off model
+The model was introduced in 1987 by Slava M. Katz.Katz back-off is a generative n-gram language model that estimates the conditional probability of a word given its history in the n-gram. It accomplishes this estimation by backing off through progressively shorter history models under certain conditions . By doing so, the model with the most reliable information about a given history is used to provide the better results.Prior to that, n-gram language models were constructed by training individual models for different n-gram orders using maximum likelihood estimation and then interpolating them together.**[8]**
+**The equation for Katz's back-off model is:**
+![](Katz4.png)
+
+*C(x) = number of times x appears in training *
+*w~i~ = i^th word in the given context*
+
+Essentially, this means that if the n-gram has been seen more than k times in training, the conditional probability of a word given its history is proportional to the MLE of that n-gram. Otherwise, the conditional probability is equal to the back-off conditional probability of the (n−1)-gram.
+The more difficult part is determining the values for k, d and α.
+k,is the least important of the parameters. It is usually chosen to be 0. However, empirical testing may find
+better values for k.
+d is typically the amount of discounting found by Good–Turing estimation. In other words, if Good–Turing estimates *C as C**, then d = C/C**
+To compute α , it is useful to first define a quantity β, which is the left-over probability mass for the (n−1)- gram:
+![](Katz3.png)
+Then the back-off weight, α, is computed as follows:
+![](katz2.png)
+
+The above formula only applies if there is data for the "(n−1)-gram". If not, the algorithm skips n-1 entirely and uses the Katz estimate for n-2. (and so on until an n-gram with data is found)**[8]**
+
+# Kneser-Ney smoothing
+The method was proposed in a 1994 paper by Reinhard Kneser, Ute Essen and Hermann Ney **[12]**
+Kneser-Ney evolved from absolute-discounting interpolation, which makes use of both higher-order (i.e., higher-n) and lower-order language models, reallocating some probability mass from 4-grams or 3-grams to simpler unigram models. The formula for absolute-discounting smoothing as applied to a bigram language model is presented below:
+![](kn1.png)
+
+Here δ refers to a fixed discount value, and α is a normalizing constant.
+The lower-order model is signficant only when count is small or zero in the higher-order model, and so should be optimized for that purpose.
+Kneser-Ney depends upon the idea of a continuation probability associated with each unigram.This probability for a given token is proportional to the number of bigrams which it completes:
+![](kn5.png)
+This quantity is normalized by dividing by the total number of bigram types (note that *j* is a free variable):
+![](kn6.png)
+**Example**: suppose “San Francisco” is common, but “Francisco” occurs only after “San”.“Francisco” will get a high unigram probability, and so absolute discounting will give a high probability to “Francisco” appearing after novel bigram histories. Better to give “Francisco” a low unigram probability, because the only time it occurs is after “San”, in which case the bigram model fits well.
+*Dan Jurafsky* gives the following example context: I can’t see without my reading _____.
+A fluent English speaker reading this sentence knows that the word glasses should fill in the blank. But since San Francisco is a common term, absolute- discounting interpolation might declare that Francisco is a better fit:
+*P~abs~*(Francisco) > *P~abs~*(glasses).
+
+Kneser-Ney fixes this problem by asking a slightly harder question of our lower-order model. Whereas the unigram model simply provides how likely a word is to appear, Kneser-Ney’s second term determines how likely a word is to appear in an unfamiliar bigram context.
+
+**Kneser-Ney in whole follows**:
+![](kn2.png)
+Note that the denominator of the first term can be simplified to a unigram count. Here is the final interpolated Kneser-Ney smoothed bigram model, in all its glory:**[12]**
+![](kn4.png)
+
+According to **Bill MacCartney** NLP Lunch Tutorial:**[3]**
+The factor with the largest influence is the use of a modified backoff distribution as in Kneser-Ney smoothing.
+• Jelinek-Mercer performs better on small training sets; Katz performs better on large training sets.
+• Katz smoothing performs well on n-grams with large counts; KneserNey is best for small counts.
+• Absolute discounting is superior to linear discounting.
+• Interpolated models are superior to backoff models for low (nonzero) counts.
+• Adding free parameters to an algorithm and optimizing these parameters on held-out data can improve performance.
+
+# Next word prediction model with Stupid backoff algorithm
+
+For this project, I am using **Stupid backoff Model**, which is the simplest solution for web-scale n-grams, It allows to compute very quickly and don’t apply any discounting and instead directly use the relative frequencies (S is used instead of P to emphasize that these are not probabilities but scores): a score (rather than a probability) for n-grams on very large datasets [1].
+
+![Stupid Back-off model.](ngram4png.png)
+
+In general, the backoff factor may be made to depend on k. Here, a single value is used and heuristically set to, alpha = 0.4. The recursion ends at unigrams: with N being the size of the training corpus.
+![Unigram probability.](ngram5.png)
+**Stupid Backoff** is inexpensive to calculate in a distributed environment while approaching the quality of Kneser-Ney smoothing for large amounts of data.The lack of normalization does not affect the functioning of the language model. It have advantages of pre-cumputing, means instead of computing the score every time a character or word is entered in the app, we can save time by pr-ecomputing the scores, resulting in datasets showing ngrams and their corresponding scores (instead of their count), as i have done here to save time.
+
+# computing the backoff score or ranking the last word for every n-gram
+```{r,echo=TRUE,results='hide',eval=FALSE}
+#set the working directory same as saved files or set the path to read the saved files directory"~/DS capstone/DS capstone"
+#setwd("~/Desktop/DS notes/NLP capstone/DS capstone/DS capstone")
+
+Fivegram <- readRDS("~/Desktop/DS notes/NLP capstone/DS capstone/DS capstone/Grams/Fivegram.rds")
+Fourgram <- readRDS("~/Desktop/DS notes/NLP capstone/DS capstone/DS capstone/Grams/Fourgram.rds")
+Threegram <- readRDS("~/Desktop/DS notes/NLP capstone/DS capstone/DS capstone/Grams/Threegram.rds")
+Twogram <- readRDS("~/Desktop/DS notes/NLP capstone/DS capstone/DS capstone/Grams/Twogram.rds")
+Onegram <- readRDS("~/Desktop/DS notes/NLP capstone/DS capstone/DS capstone/Grams/Onegram.rds")
+
+# steps to calculate backoff scoring
+# 1. Seperate the first 4, first 3, first 2 and first 1 words from the Fivegram,Fourgram,Threegram and Twogram respectively.
+# 2. Seperate last word from each n-gram as predicted next word
+# 3. Merge the seperated, first 4 words of Fivegram  with Fourgram, first 3 words of fourgram  with Threegram, first 2 words of Threegram  with Twogram and first 1 word of Twogram  with Onegram
+# 4. Calculate the score as MLE with backoff factor 0.4 with each descendent n-grams
+# (score= counts of Fivegram/count of merged fourgram) and so on for each gram scoring
+
+
+#Match5Gram
+
+# function to extract first four words from fivegrams
+four<- function(x){
+  paste(unlist(strsplit(x, " "))[1:4], collapse = " ")
+}
+# seperate the last word as predicted next word
+last<- function(x){
+  paste(unlist(strsplit(x, " "))[5], collapse = " ")
+}
+# apply to seperate 4grams from fivegrams
+Fivegram$fourG<- unlist(lapply(as.character(Fivegram$Var1), four))
+Match5<- merge(Fivegram, Fourgram, by.x = "fourG", by.y = "Var1", all=TRUE,stringAsFactors = FALSE)
+#remove NAs
+Match5 <- na.omit(Match5)
+#rename columns
+names(Match5) <- c("fourG", "pentagram", "c_pentagram", "c_fourG")
+Match5<-Match5[,c(2,3,1,4)]
+#calculate score for stupid backoff
+Match5 <- Match5 %>% mutate(score = c_pentagram/c_fourG)
+Match5$predicted_word<- unlist(lapply(as.character(Match5$pentagram), last))
+head(Match5,10)
+saveRDS(Match5,"./ShinyCapstone/Match5.rds")
+write.csv(Match5,"./ShinyCapstone/Match5.csv",row.names = F)
+rm("Fivegram")
+
+#Match4Gram
+Three<- function(x){
+  paste(unlist(strsplit(x, " "))[1:3], collapse = " ")
+}
+# seperate the last word as predicted next word
+last<- function(x){
+  paste(unlist(strsplit(x, " "))[4], collapse = " ")
+}
+# apply to seperate 4grams from fivegrams
+Fourgram$ThreeG<- unlist(lapply(as.character(Fourgram$Var1), Three))
+
+Match4 <- merge(Fourgram, Threegram, by.x = "ThreeG", by.y = "Var1", all=TRUE,stringAsFactors = FALSE)
+#remove NAs
+Match4 <- na.omit(Match4)
+#rename columns
+names(Match4) <- c("ThreeG", "quadgram", "c_quadgram", "c_ThreeG")
+Match4 <-Match4[,c(2,3,1,4)]
+#calculate score for stupid backoff
+Match4 <- Match4 %>% mutate(score = c_quadgram/c_ThreeG)
+Match4$predicted_word<- unlist(lapply(as.character(Match4$quadgram), last))
+head(Match4,10)
+saveRDS(Match4,"./ShinyCapstone/Match4.rds")
+write.csv(Match4,"./ShinyCapstone/Match4.csv",row.names = F)
+rm("Fourgram")
+
+#Match3Gram
+Two<- function(x){
+  paste(unlist(strsplit(x, " "))[1:2], collapse = " ")
+}
+# seperate the last word as predicted next word
+last<- function(x){
+  paste(unlist(strsplit(x, " "))[3], collapse = " ")
+}
+# apply to seperate 4grams from fivegrams
+Threegram$TwoG<- unlist(lapply(as.character(Threegram$Var1), Two))
+
+Match3 <- merge(Threegram, Twogram, by.x = "TwoG", by.y = "Var1", all=TRUE,stringAsFactors = FALSE)
+#remove NAs
+Match3 <- na.omit(Match3)
+#rename columns
+names(Match3) <- c("TwoG", "trigram", "c_trigram", "c_TwoG")
+Match3 <-Match3[,c(2,3,1,4)]
+#calculate score for stupid backoff
+Match3 <- Match3 %>% mutate(score = c_trigram/c_TwoG)
+Match3$predicted_word<- unlist(lapply(as.character(Match3$trigram), last))
+head(Match3,10)
+saveRDS(Match3,"./ShinyCapstone/Match3.rds")
+write.csv(Match3,"./ShinyCapstone/Match3.csv",row.names = F)
+rm("Threegram")
+
+#Match2 Gram
+One<- function(x){
+  paste(unlist(strsplit(x, " "))[1], collapse = " ")
+}
+# seperate the last word as predicted next word
+last<- function(x){
+  paste(unlist(strsplit(x, " "))[2], collapse = " ")
+}
+# apply to seperate 4grams from fivegrams
+Twogram$OneG<- unlist(lapply(as.character(Twogram$Var1), One))
+
+Match2 <- merge(Twogram, Onegram, by.x = "OneG", by.y = "Var1", all=TRUE,stringAsFactors = FALSE)
+#remove NAs
+Match2 <- na.omit(Match2)
+#rename columns
+names(Match2) <- c("OneG", "bigram", "c_bigram", "c_OneG")
+Match2<-Match2[,c(2,3,1,4)]
+#calculate score for stupid backoff
+Match2 <- Match2 %>% mutate(score = c_bigram/c_OneG)
+Match2$predicted_word<- unlist(lapply(as.character(Match2$bigram), last))
+head(Match2,10)
+saveRDS(Match2,"./ShinyCapstone/Match2.rds")
+write.csv(Match2,"./ShinyCapstone/Match2.csv",row.names = F)
+rm("Twogram")
+
+Match1<-Onegram %>% mutate(predicted_word=as.character(Var1)) %>% mutate(score = Freq/sum(Freq))
+head(Match1,10)
+saveRDS(Match1,"./ShinyCapstone/Match1.rds")
+write.csv(Match1,"./ShinyCapstone/Match1.csv",row.names = F)
+rm("Onegram")
+
+rm("Match1","Match2","Match3","Match4","Match5")
+#Match1 <- readRDS("~/Desktop/DS notes/NLP capstone/DS capstone/CapstoneProject/ShinyCapstone/Match1.rds")
+#Match2 <- readRDS("~/Desktop/DS notes/NLP capstone/DS capstone/CapstoneProject/ShinyCapstone/Match2.rds")
+#Match3 <- readRDS("~/Desktop/DS notes/NLP capstone/DS capstone/CapstoneProject/ShinyCapstone/Match3.rds")
+#Match4 <- readRDS("~/Desktop/DS notes/NLP capstone/DS capstone/CapstoneProject/ShinyCapstone/Match4.rds")
+#Match5 <- readRDS("~/Desktop/DS notes/NLP capstone/DS capstone/CapstoneProject/ShinyCapstone/Match5.rds")
+
+```
+
+# Prediction model for text Input
+
+steps to follow in Prediction Algorithm
+1. Start with matching the last 4 words of user input to the the first 4 words(fourG) of fivegram table, output the matches 
+2. If no match found in Fivegram, match the last 3 words of user input to the first 3 words(ThreeG) of Fourgram table, and calculate the score by multiplying with backoff factor= 0.4.
+3. If no match found in Fourgram,  check if the last two words of user input match the first two words(TwoG) of Treegram table, and calculate score by multiplying with backoff factor = 0.4 x 0.4
+4. If no match found in Threegram,  check if the last words of user input match the first word(OneG) of Twogram table, and calculate score by multiplying with backoff factor = 0.4 x 0.4 x .4
+5. Extract last words from matched n-grams as possible predicted words.
+6. Calculate final score(probabilty) by adding all the scores from each n-grams
+```{r,echo=TRUE}
+# prediction_Rcode.R
+
+#setwd("~Desktop/DS notes/NLP capstone/DS capstone/CapstoneProject")
+
+# 1.Download the backoff score tables
+
+Match5 <- readRDS("ShinyCapstone/Match5.rds")
+Match4 <- readRDS("ShinyCapstone/Match4.rds")
+Match3 <- readRDS("ShinyCapstone/Match3.rds")
+Match2 <- readRDS("ShinyCapstone/Match2.rds")
+Match1 <- readRDS("ShinyCapstone/Match1.rds")
+
+# attach the libraries:
+#lib <- c('tm','dplyr','stringr','tidytext','data.table','tidyr')
+#suppressMessages(lapply(lib, require, character.only = TRUE))
+
+#2.First we need to clean the user input string
+
+# function to remove which are not numbers or letters
+removenon_engwords <-function(x)gsub(pattern = "\\W+"," ",x)# function to remove which are not numbers or letters
+
+# Cleaning Function 
+cleanInput <- function(textInput){
+  textInput <- tolower(textInput)
+  textInput <- removePunctuation(textInput)
+  textInput <- removeNumbers(textInput)
+  textInput <- removenon_engwords(textInput)
+  textInput <- str_replace_all(textInput, "[^[:alnum:]]", " ")
+  textInput <- stripWhitespace(textInput)
+  textInput <-str_split(textInput,pattern = "\\s+") # spliting the words
+  textInput <-unlist(textInput)
+  
+  return(textInput)
+}
+
+# 3.Predict next word Function takes in the input variable from user and predicts the next word
+
+predictNextWord <- function(textInput)
+{
+  
+  textInput <- cleanInput(textInput)
+  
+  #If the text input is 4 words
+  if (length(textInput) >= 4) {
+    #start with 5-Gram Model
+    # extracting last 4 words from input
+  textInput4 <- paste(tail(textInput, 4), collapse = " ")
+  predict5 <-Match5[Match5$fourG == textInput4,]
+  predict5<- mutate(predict5,score5 = score)
+  predict5 <- predict5[order(-predict5$score5),]
+  predict5 <- select(predict5,predicted_word,score5)
+   # head(predict5,10)
+    
+    # drop to 4-Gram Model
+  textInput3 <- paste(tail(textInput, 3), collapse = " ")
+  predict4 <- Match4[Match4$ThreeG==textInput3,]
+  predict4<- mutate(predict4, score4 = 0.4*score)
+  predict4 <- predict4[order(-predict4$score4),]
+  predict4 <- select(predict4,predicted_word,score4)
+   # head(predict4,10)
+    
+    
+    #3-Gram Model
+  textInput2 <- paste(tail(textInput, 2), collapse = " ")
+  predict3 <- Match3[Match3$TwoG==textInput2,]
+  predict3<- mutate(predict3, score3 = 0.4^2*score)
+  predict3 <- predict3[order(-predict3$score3),]
+  predict3 <- select(predict3,predicted_word,score3)
+   # head(predict3,10)
+    
+    
+    #2-Gram Model
+  textInput1 <- paste(tail(textInput, 1), collapse = " ")
+  predict2 <- Match2[Match2$OneG==textInput1,]
+  predict2<- mutate(predict2, score2 = 0.4^3*score)
+  predict2 <- predict2[order(-predict2$score2),]
+  predict2 <- select(predict2,predicted_word,score2)
+   # head(predict2,10)
+    
+    
+    #1-Gram Model
+  predict1<- Match1 %>% mutate(score1 = 0.4^4*score)
+  predict1 <- predict1[order(-predict1$score1),]
+  predict1 <- select(predict1,predicted_word,score1)
+   # head(predict1,10)
+    
+    
+    # combining all the predictions from each grams
+ Pred <- merge(predict5, predict4, by.x = 'predicted_word',by.y = 'predicted_word',all = T,stringsAsFactors = F)
+ Pred <- merge(Pred, predict3, by.x = 'predicted_word',by.y = 'predicted_word', all = T,stringsAsFactors = F)
+ Pred <- merge(Pred, predict2, by.x = 'predicted_word',by.y = 'predicted_word', all = T,stringsAsFactors = F)
+ Pred <- merge(Pred, predict1, by.x = 'predicted_word',by.y = 'predicted_word', all = T,stringsAsFactors = F)
+   
+  Pred[is.na(Pred)] <- 0
+  Pred["Score"] <- rowSums(Pred[, 2:6])
+  Pred <- arrange(Pred,desc(score5), desc(score4), desc(score3), desc(score2),desc(score1))
+  Final_Pred<-data.frame(Pred)
+  Final_Pred<- select(Final_Pred,predicted_word,Score)
+  colnames(Final_Pred)<- c("Predicted_word","Score")
+   
+    
+      return (head(Final_Pred$Predicted_word,3))
+    
+  } else if (length(textInput) == 3) {  
+    
+    #start with 4-gram model extracting last Three words
+    
+    #4-Gram Model
+    textInput3 <- paste(tail(textInput, 3), collapse = " ")
+    predict4 <- Match4[Match4$ThreeG==textInput3,]
+    predict4<- mutate(predict4, score4 = score)
+    predict4 <- predict4[order(-predict4$score4),]
+    predict4 <- select(predict4,predicted_word,score4)
+   # head(predict4,10)
+    
+    #3-Gram Model
+    textInput2 <- paste(tail(textInput, 2), collapse = " ")
+    predict3 <- Match3[Match3$TwoG==textInput2,]
+    predict3<- mutate(predict3, score3 = 0.4*score)
+    predict3 <- predict3[order(-predict3$score3),]
+    predict3 <- select(predict3,predicted_word,score3)
+   # head(predict3,10)
+    
+    #2-Gram Model
+    textInput1 <- paste(tail(textInput, 1), collapse = " ")
+    predict2 <- Match2[Match2$OneG==textInput1,]
+    predict2<- mutate(predict2, score2 = 0.4^2*score)
+    predict2 <- predict2[order(-predict2$score2),]
+    predict2 <- select(predict2,predicted_word,score2)
+   # head(predict2,10)
+    
+    #1-Gram Model
+    predict1<- Match1 %>% mutate(score1 = 0.4^3*score)
+    predict1 <- predict1[order(-predict1$score1),]
+    predict1 <- select(predict1,predicted_word,score1)
+   # head(predict1,10)
+    
+  Pred <- merge(predict4, predict3, by.x = 'predicted_word',by.y = 'predicted_word',all = T,stringsAsFactors = F)
+  Pred <- merge(Pred, predict2, by.x = 'predicted_word',by.y = 'predicted_word', all = T,stringsAsFactors = F)
+  Pred <- merge(Pred, predict1, by.x = 'predicted_word',by.y = 'predicted_word', all = T,stringsAsFactors = F)
+    
+    Pred[is.na(Pred)] <- 0
+    Pred["Score"] <- rowSums(Pred[, 2:5])
+    Pred <- arrange(Pred, desc(score4), desc(score3), desc(score2),desc(score1))
+    Final_Pred<-data.frame(Pred)
+    Final_Pred<- select(Final_Pred,predicted_word,Score)
+    colnames(Final_Pred)<- c("Predicted_word","Score")
+    
+      return (head(Final_Pred$Predicted_word,3))
+    
+    
+  } else if (length(textInput) == 2) {
+    
+    #start with 3-Gram Model and extract with last 2 words
+    textInput2 <- paste(tail(textInput, 2), collapse = " ")
+    predict3 <- Match3[Match3$TwoG==textInput2,]
+    predict3<- mutate(predict3, score3 = score)
+    predict3 <- predict3[order(-predict3$score3),]
+    predict3 <- select(predict3,predicted_word,score3)
+   # head(predict3,10)
+    
+    #2-Gram Model
+    textInput1 <- paste(tail(textInput, 1), collapse = " ")
+    predict2 <- Match2[Match2$OneG==textInput1,]
+    predict2<- mutate(predict2, score2 = 0.4*score)
+    predict2 <- predict2[order(-predict2$score2),]
+    predict2 <- select(predict2,predicted_word,score2)
+    #head(predict2,10)
+    
+    #1-Gram Model
+    predict1<- Match1 %>% mutate(score1 = 0.4^2*score)
+    predict1 <- predict1[order(-predict1$score1),]
+    predict1 <- select(predict1,predicted_word,score1)
+   # head(predict1,10)
+    
+  Pred <- merge(predict3, predict2, by.x = 'predicted_word',by.y = 'predicted_word',all = T,stringsAsFactors = F)
+  Pred <- merge(Pred, predict1, by.x = 'predicted_word',by.y = 'predicted_word', all = T,stringsAsFactors = F)
+    
+    Pred[is.na(Pred)] <- 0
+    Pred["Score"] <- rowSums(Pred[, 2:4])
+    Pred <- arrange(Pred, desc(score3), desc(score2),desc(score1))
+    Final_Pred<-data.frame(Pred)
+    Final_Pred<- select(Final_Pred,predicted_word,Score)
+    colnames(Final_Pred)<- c("Predicted_word","Score")
+    
+      return (head(Final_Pred$Predicted_word,3))
+    
+    
+  }else (length(textInput)==1)
+    #start with 2-Gram Model
+  textInput1 <- paste(tail(textInput, 1), collapse = " ")
+  predict2 <- Match2[Match2$OneG==textInput1,]
+  predict2<- mutate(predict2, score2 = score)
+  predict2 <- predict2[order(-predict2$score2),]
+  predict2 <- head(select(predict2,predicted_word,score2),10)
+ # head(predict2,10)
+  
+  #1-Gram Model
+  predict1<- Match1 %>% mutate(score1 = 0.4*score)
+  predict1 <- predict1[order(-predict1$score1),]
+  predict1 <- select(predict1,predicted_word,score1)
+  #head(predict1,10)
+  
+ Pred <- merge(predict2, predict1, by.x = 'predicted_word',by.y = 'predicted_word',all = T,stringsAsFactors = F)
+  Pred[is.na(Pred)] <- 0
+  Pred["Score"] <- rowSums(Pred[, 2:3])
+  Pred <- arrange(Pred,desc(score2), desc(score1))
+  Final_Pred<-data.frame(Pred)
+  Final_Pred<- select(Final_Pred,predicted_word,Score)
+  colnames(Final_Pred)<- c("Predicted_word","Score")
+  
+    return (head(Final_Pred$Predicted_word,3))
+}
+
+```
+
+# Validating our n-gram model 
+
+Lets say we have a string **"it happened for the first time"** its true next word is **"in"**
+Since the length of input text is more than 4 words, we started with 
+
+**Fivegram model**: we extracted the last four words of input and check the input **"for the first time"** into Fivegram table which give us 35 matches of fivegrams whose first four words exactly match the input having different last words options and mark the freq. Then we checked the input **"for the first time" **in Fourgram table to get its freq  that comes out to be 610. Calculate the score as: freq of fivegram/freq of fourgram. Fivegrams that matches have "in","since","this"etc. as their last word, thus giving us suggestion for predicted next word: depending upon the highest score.
+
+Here,    
+ "for the first time *in*" occurred 163 times,"for the first time *since*" occurred 79 times,"for the first time *this*" occurred 31 times etc.. in Fivegram table, however,*"for the first time"*  occurred 610 times in fourgram table.Therefore the score will be **163/610 =  0.267213115**, for *"in"* as predicted word, score for *"since"* as predicted word is **79/610 =  0.129508197**, and score for *"this"* is **31/610 =  0.050819672**as predicted word and so on for every match.
+
+
+For **Fourgram model**: We take last three words *"the first time"* and match them in fourgram which matches 53 fougrams whose first three words exactly match the input having different last words options("in","i","since") and mark the freq. Then we checked the input "the first time " in Threegram table that occured 1003 times. Calculate the score as: freq of fourgram/freq of threegram.Here, we multiply by the score with backoff factor 0.4.
+
+Here,    
+ "the first time *in*" occurred 191 times,"the first time *i*" occurred 123 times,"the first time *since*" occurred 90 times etc.. in Fourgram table, however,*"the first time"*  occurred 1003 times in Threegram table.Therefore the score will be **0.4 x 191/1003=  0.07617149**, for *"in"* as predicted word, score for *"i"* as predicted word is **0.4 x 123/1003=  0.04905284**, and score for *"since"* is **0.4 x 90/1003=  0.03589232**as predicted word and so on for every match.   
+    
+
+For **Threegram model**: We take last two words *"first time"* and match them in Threegram table which matches 71 Threegrams whose first two words exactly match the input having different last words options("in","i","since") and mark the freq. Then we checked the input "first time " in Twogram table that occurred 1246 times. Calculate the score as: freq of Threegram/freq of Twogram. This time we multiply the score by backoff factor 0.4 X 0.4.
+
+Here,    
+ "first time *in*" occurred 216 times, "first time *i*" occurred 146 times, "first time *since*" occurred 96 times  etc.. in Threegram table, however,*"first time"*  occurred 1246 times in Twogram table.Therefore the score will be **0.4^2(216)/1246 = 0.027736758 **, for *"in"* as predicted word, score for *"i"* as predicted word is **0.4^2(146)/1246 = 0.018747994 **, and score for *"since"* is **0.4^2(96)/1246 = 0.012327448**as predicted word and so on for every match.   
+
+For **Twogram model**: We take last one word *"time"* and match it in Twogram table which matches 855 Twograms whose first word exactly match the input having different last words options("to","i","for") and mark the freq. Then we checked the input "time " in Onegram table, which occurred 21950 times.. Calculate the score as: freq of Twogram/freq of Onegram. This time we multiply the score by backoff factor 0.4 X 0.4 X 0.4
+
+Here,    
+ "time *to*" occurred 2662 times, "time *i*" occurred 1290 times, "time *for*" occurred 1007 times, etc.. in Twogram table, however,*"time"*  occurred 21950 times in Onegram table. Therefore the score will be **0.4^3(2662)/21950 = 0.007761640 **, for *"to"* as predicted word, score for *"i"* as predicted word is **0.4^3(1290)/21959 = 0.003761276**, and score for *"for"* is **0.4^3(1007)/21950 = 0.002936128** as predicted word and so on for every match.   
+
+For the final score and predicted words, we add up all the scores and the words those have highest score will be chosen as next possible predicted word.
+
+score5 + score4 + score3 + score2 + score1 = Final score
+
+For this example we get three most possible predicted words according to their scores: and the top next predicted word is **"in"**
+*Predicted_word*        *Final Score*
+1      in                0.37356181
+2     since              0.17820615
+3     this               0.06815122
+
+This works out pretty much good, and has got the top 1 precision as "in" is predicted first choice that was the original true last word of the phrase.
+
+
+# Test for accuracy and performance
+
+For testing the prediction model on testdata that I kept aside earlier, I created the n-grams varies from 3-grams to 30-grams, for keeping sentence length maximum of 30 words. Then, I sampled the 8-10 batches of 100 n-grams and subjected to prediction model to find the next possible word.I kept the last word from test input as real next predicted word.Then, I checked the model precision and accuracy by just extracting the top 1,2,3,5 and 10 predicted words from the model and match them with real true last words of the sentences. I set the pass fail(1,0) measures for a hit or not, means if true last word matches the predicted word it passed (1), otherwise failed(0).For top 1,2,3,5 or 10 precision accuracy I matched the last true word with  top 1,2,3,5 or 10 predicted word. Below is the example of one batch of 100 test n-grams. 
+  
+```{r}
+
+testdata<-readRDS("~/Desktop/DS notes/NLP capstone/DS capstone/DS capstone/testing.rds")
+testdata <- data.frame(cleantext = sapply(testdata, as.character), stringsAsFactors=FALSE)
+testdata <- testdata[!is.na(testdata$cleantext),]
+testtokens <- tokenize_ngrams(testdata,n=10,n_min = 3)
+tokenTable <- table(unlist(testtokens))
+testgram <- data.frame(tokenTable)
+testgram <- testgram[order(testgram$Freq,decreasing = TRUE),]
+#head(testgram,10)
+rm("testtokens","tokenTable","testdata")
+
+set.seed(1280)
+testchunks <- sample(testgram$Var1, 100, replace = FALSE)
+
+# delete last word to get input sentence
+testinput <- lapply(testchunks, function(x) gsub("\\s*\\w*$", "", x))
+testinput = as.character(testinput)
+head(testinput,10)
+# save last true word  
+true_word <- lapply(testchunks, function(x) word(x, -1))
+true_word = as.character(true_word)
+
+# apply predict function to input only keep words 
+pred_word<- lapply(testinput , function(x) predictNextWord(x))
+pred_word = as.character(pred_word)
+
+# create data frame that includes pass and fail 
+Top5_accuracy_check <- data.frame(cbind(true_word, pred_word),stringsAsFactors=FALSE) %>% 
+                  mutate(pass = ifelse(str_detect(pred_word,true_word), 1, 0))
+
+acc_score<- sum(Top5_accuracy_check$pass==1)
+paste(acc_score)  
+            #word length    (3-10L)   (3-30L)
+# top-1 precision accuracy  = 20%      16%
+# top-2 precision accuracy  = 34%      22%
+# top-3 precision accuracy  = 37%      26%
+# top-5 precision accuracy  = 43%      36%
+# top-10 precision accuracy = 50%      48%
+
+
+# Below is the **top-5 accuracy obtained**:
+# testchunk1 (3-10 words length,100 sentences) = 37%
+# testchunk2 (3-10 words length,100 sentences) = 33%
+# testchunk3 (3-10 words length,100 sentences) = 43%
+# testchunk4 (3-10 words length,100 sentences) = 31%
+# testchunk5 (3-30 words length,100 sentences) = 36%
+# testchunk6 (10-30 words length,100 sentences) = 25%
+# testchunk7 (10-30 words length,100 sentences) = 30%
+# testchunk8 (3-30 words length,100 sentences) = 31%
+
+head(Top5_accuracy_check,10)
+```
+
+I tested the model on different length sentences with each testchunk containing 100 sentences of test data.
+
+# Conclusion
+
+Building the text prediction model is quite tough and intricate for those who doesn't know anything about Natural Language Processing (NLP).I came across so many issues to solve, I find that cleaning data is most iterative and intricate process for this modeling. The more the data is cleaned there is more probability of finding the word in n-gram dictionaries and calculating their scores.In this data, there were tons of spelling mistakes and repetitive characters those made their occurrence very low in n-grams freq tables.Thus, I find pruning the n-gram tables for low freq words was good idea to increase the accuracy of the model. Further, I moved to higher n-grams up to 5 gram tables, to achieve improved performance. Calculating n-gram scores in advance was very helpful for writing prediction algorithm. Though, I have studied lot of material on NLP but as a first timer into R-language and with little NLP knowledge, I will try to explore other model with smoothing techniques for unobserved or low freq words for the model performance.
+
+*" no matter how much data one has, smoothing can almost always help performance, and for a relatively small effort.”*
+                                                                                               -Chen & Goodman (1998)
+
+Smoothing methods to explore:
+
+• Additive smoothing,
+• Good-Turing estimate,
+• Jelinek-Mercer smoothing (interpolation),
+• Katz smoothing (backoff),
+• Witten-Bell smoothing,
+• Absolute discounting,
+• Kneser-Ney smoothing,
+ 
+For this stupid back-off model, I was successful to increase the performance and  accuracy from 16-20% to 30-40% for top-5 precision. However, I need to explore and work on web apps to make more sophisticated but user friendly apps.
+
+# Shiny App
+The web app is hosted at: *https://satindrakathania-2020.shinyapps.io/ShinyCapstone/*
+
+The complete code for the web app is available at *Github: https://github.com/SatK-ds2020/DS-capstone-project-2020*
+
+To initialize the app: Wait 10 seconds and follow the instruction:
+There is a text input box, where you can enter your text and submit it.OR you can try the phrases given from twitter, blogs and news pooled samples.
+The app display bar-plot of top 10 predictions and wordcloud for the most probable words .
+There is a Summary and References tab for more information about the app.
+
+
+# Pitch presentation
+As a part of the project I made a 5 slide deck on R Pubs: *https://rpubs.com/SatKat_2020/648587*
+
+that contains a description of the algorithm used to make the prediction.
+The slide deck describes the app, means it have instructions to use the app and have a summary tab to describe how it functions.
+This is a very simple and user friendly web app, even non-data science users can handle it easily.I validated the app for couple of sentences or phrases and it worked pretty well.  
+
+
+# References
+
+1. **Large Language Models in Machine Translation**,https://www.aclweb.org/anthology/D07-1090.pdf
+2. **Real Time Word Prediction Using N-Grams Model**.IJITEE,ISSN: 2278-3075, Vol.8 Issue-5, 2019
+3. **NLP Lunch Tutorial: Smoothing, Bill MacCartney**, 21.04.2005, https://nlp.stanford.edu/~wcmac/papers/20050421-smoothing-tutorial.pdf
+4. **Tokenizer: Introduction to the tokenizers R Package** https://cran.r-project.org/web/packages/tokenizers/
+5. **Smoothing and Backoff**, http://www.cs.cornell.edu/courses/cs4740/2014sp/lectures/smoothing+backoff.pdf.
+6. **N-gram Language Models**, https://web.stanford.edu/~jurafsky/slp3/ed3book.pdf
+7. **Speech and Language Processing** https://web.stanford.edu/class/cs124/lec/languagemodeling.pdf
+8. **Katz’s back-off model**, Wikipedia,https://en.wikipedia.org/wiki/Katz%27s_back-off_model
+9. **Good-Turing frequency estimation**, Wikipedia, https://en.wikipedia.org/wiki/Good%E2%80%93Turing_frequency_estimation
+10. **NLP: Language Models,** https://www.csd.uwo.ca/courses/CS4442b/L9-NLP-LangModels.pdf
+11. **Language model**,https://en.wikipedia.org/wiki/Language_model
+12. **Kneser–Ney smoothing**,https://en.wikipedia.org/wiki/Kneser%E2%80%93Ney_smoothing
